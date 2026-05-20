@@ -16,7 +16,20 @@ public delegate JsonNode? AdapterHandler(JsonObject args);
 public sealed class AdapterError : Exception
 {
     public string Code { get; }
+    /// Optional structured payload — e.g. {"did_you_mean": ["..."]} — that
+    /// rides on the wire alongside code+message so the client gets actionable info.
+    public JsonObject? Hints { get; set; }
     public AdapterError(string code, string message) : base(message) { Code = code; }
+}
+
+public static class AdapterErrorExtensions
+{
+    public static AdapterError WithHint(this AdapterError e, string key, JsonNode? value)
+    {
+        e.Hints ??= new JsonObject();
+        e.Hints[key] = value?.DeepClone();
+        return e;
+    }
 }
 
 /// Common adapter logic: connect to 127.0.0.1:port, send hello, loop on requests,
@@ -150,7 +163,7 @@ public abstract partial class AdapterBase : Node
         }
         catch (AdapterError err)
         {
-            response = ErrorResponse(id, err.Code, err.Message);
+            response = ErrorResponse(id, err.Code, err.Message, err.Hints);
         }
         catch (Exception ex)
         {
@@ -166,14 +179,16 @@ public abstract partial class AdapterBase : Node
         catch { /* socket likely closed */ }
     }
 
-    private static JsonObject ErrorResponse(string id, string code, string message)
+    private static JsonObject ErrorResponse(string id, string code, string message, JsonObject? hints = null)
     {
+        var err = new JsonObject { ["code"] = code, ["message"] = message };
+        if (hints is not null) err["hints"] = hints.DeepClone();
         return new JsonObject
         {
             ["type"] = "response",
             ["id"] = id,
             ["result"] = null,
-            ["error"] = new JsonObject { ["code"] = code, ["message"] = message },
+            ["error"] = err,
         };
     }
 }

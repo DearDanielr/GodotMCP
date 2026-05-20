@@ -161,7 +161,7 @@ public sealed class AdapterConnection : IAsyncDisposable
                 {
                     string code = JsonString(err, "code") ?? ErrorCodes.Internal;
                     string message = JsonString(err, "message") ?? "Adapter error.";
-                    tcs.TrySetException(new AdapterException(code, message));
+                    tcs.TrySetException(new AdapterException(code, message, err["hints"]));
                 }
                 else
                 {

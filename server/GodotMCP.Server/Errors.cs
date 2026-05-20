@@ -22,5 +22,11 @@ public static class ErrorCodes
 public sealed class AdapterException : Exception
 {
     public string Code { get; }
-    public AdapterException(string code, string message) : base(message) { Code = code; }
+    /// Structured hints attached by the adapter (e.g. {"did_you_mean": [...]}).
+    public System.Text.Json.Nodes.JsonNode? Hints { get; }
+    public AdapterException(string code, string message, System.Text.Json.Nodes.JsonNode? hints = null) : base(message)
+    {
+        Code = code;
+        Hints = hints;
+    }
 }

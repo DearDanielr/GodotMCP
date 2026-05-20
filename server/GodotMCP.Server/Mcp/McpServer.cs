@@ -156,36 +156,65 @@ public sealed class McpServer
         try
         {
             var result = await tool.Handler(args, ct).ConfigureAwait(false);
-            return new JsonObject
-            {
-                ["content"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["type"] = "text",
-                        ["text"] = ToolResultText(result),
-                    }
-                },
-                ["isError"] = false,
-                ["structuredContent"] = result ?? new JsonObject(),
-            };
+            return BuildToolResult(result);
         }
         catch (AdapterException ex)
         {
+            string hintText = "";
+            var structured = new JsonObject
+            {
+                ["code"] = ex.Code,
+                ["message"] = ex.Message,
+            };
+            if (ex.Hints is not null)
+            {
+                structured["hints"] = ex.Hints.DeepClone();
+                hintText = "\nhints: " + ex.Hints.ToJsonString();
+            }
             return new JsonObject
             {
                 ["content"] = new JsonArray
                 {
-                    new JsonObject { ["type"] = "text", ["text"] = $"[{ex.Code}] {ex.Message}" }
+                    new JsonObject { ["type"] = "text", ["text"] = $"[{ex.Code}] {ex.Message}{hintText}" }
                 },
                 ["isError"] = true,
-                ["structuredContent"] = new JsonObject
-                {
-                    ["code"] = ex.Code,
-                    ["message"] = ex.Message,
-                },
+                ["structuredContent"] = structured,
             };
         }
+    }
+
+    /// Detects the `_mcp_image` magic shape and emits an image content block.
+    /// Without it we just return the JSON as a text block.
+    private static JsonObject BuildToolResult(JsonNode? result)
+    {
+        var content = new JsonArray();
+        JsonNode? structured = result;
+
+        if (result is JsonObject obj && obj["_mcp_image"] is JsonObject img)
+        {
+            content.Add(new JsonObject
+            {
+                ["type"] = "image",
+                ["data"] = (string?)img["data"] ?? "",
+                ["mimeType"] = (string?)img["mime_type"] ?? "image/png",
+            });
+            // Drop the bulky base64 from the structured echo; keep the metadata.
+            var echo = obj.DeepClone().AsObject();
+            echo.Remove("_mcp_image");
+            structured = echo;
+            content.Add(new JsonObject { ["type"] = "text", ["text"] = ToolResultText(structured) });
+        }
+        else
+        {
+            content.Add(new JsonObject { ["type"] = "text", ["text"] = ToolResultText(result) });
+        }
+
+        return new JsonObject
+        {
+            ["content"] = content,
+            ["isError"] = false,
+            ["structuredContent"] = structured ?? new JsonObject(),
+        };
     }
 
     private static string ToolResultText(JsonNode? node)
