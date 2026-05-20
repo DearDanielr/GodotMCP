@@ -84,4 +84,22 @@ public static class SchemaBuilder
         if (description is not null) o["description"] = description;
         return o;
     }
+
+    public static JsonObject Array(JsonObject itemSchema, string? description = null)
+    {
+        var o = new JsonObject
+        {
+            ["type"] = "array",
+            ["items"] = itemSchema.DeepClone(),
+        };
+        if (description is not null) o["description"] = description;
+        return o;
+    }
+
+    public static JsonObject Number(string? description = null)
+    {
+        var o = new JsonObject { ["type"] = "number" };
+        if (description is not null) o["description"] = description;
+        return o;
+    }
 }
