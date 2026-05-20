@@ -14,8 +14,11 @@ internal static class RuntimeHandlers
     private static readonly ConcurrentDictionary<string, JsonObject> _snapshots = new();
     private static long _logOffset = 0;
 
-    public static void Register(Node owner, Dictionary<string, AdapterHandler> h)
+    public static void Register(AdapterBase owner, Dictionary<string, AdapterHandler> h)
     {
+        // Sync handlers added in v0.3: signals, groups, physics, animation, scene ops,
+        // watches (push), eval. Async handlers register in RegisterAsync below.
+        RuntimeHandlersExtra.RegisterSync(owner, h);
         // ── introspection ──────────────────────────────────────────────────
         h["runtime_get_tree"] = args => GetTree(owner, args);
         h["runtime_get_node_property"] = args => GetNodeProperty(owner, args);
@@ -48,6 +51,11 @@ internal static class RuntimeHandlers
         h["runtime_restore_state"] = args => RestoreState(owner, args);
     }
 
+    public static void RegisterAsync(AdapterBase owner, Dictionary<string, AsyncAdapterHandler> h)
+    {
+        RuntimeHandlersExtra.RegisterAsync(owner, h);
+    }
+
     // ════════════════════════════════════════════════════════════════════
     // INTROSPECTION
     // ════════════════════════════════════════════════════════════════════
@@ -77,9 +85,8 @@ internal static class RuntimeHandlers
         if (withProps)
         {
             var props = new JsonObject();
-            foreach (var entry in node.GetPropertyList())
+            foreach (var d in node.GetPropertyList())
             {
-                var d = entry.AsGodotDictionary();
                 var usage = (long)d["usage"];
                 if ((usage & (long)PropertyUsageFlags.Storage) == 0) continue;
                 string pname = d["name"].AsString();
@@ -145,9 +152,8 @@ internal static class RuntimeHandlers
         var node = ResolveNode(owner, args);
         var arr = new JsonArray();
         bool internalToo = args["include_internal"]?.GetValue<bool>() ?? false;
-        foreach (var m in node.GetMethodList())
+        foreach (var d in node.GetMethodList())
         {
-            var d = m.AsGodotDictionary();
             string name = d["name"].AsString();
             if (!internalToo && name.StartsWith("_", StringComparison.Ordinal)) continue;
             arr.Add(name);
@@ -159,9 +165,8 @@ internal static class RuntimeHandlers
     {
         var node = ResolveNode(owner, args);
         var arr = new JsonArray();
-        foreach (var p in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = p.AsGodotDictionary();
             var usage = (long)d["usage"];
             if ((usage & (long)PropertyUsageFlags.Storage) == 0 && (usage & (long)PropertyUsageFlags.Editor) == 0) continue;
             arr.Add(new JsonObject
@@ -178,7 +183,7 @@ internal static class RuntimeHandlers
         var node = ResolveNode(owner, args);
         var arr = new JsonArray();
         foreach (var sig in node.GetSignalList())
-            arr.Add(sig.AsGodotDictionary()["name"].AsString());
+            arr.Add(sig["name"].AsString());
         return new JsonObject { ["path"] = node.GetPath().ToString(), ["signals"] = arr };
     }
 
@@ -426,9 +431,8 @@ internal static class RuntimeHandlers
     private static void SnapshotWalk(Node root, Node node, JsonArray sink)
     {
         var props = new JsonObject();
-        foreach (var entry in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = entry.AsGodotDictionary();
             var usage = (long)d["usage"];
             if ((usage & (long)PropertyUsageFlags.Storage) == 0) continue;
             string pname = d["name"].AsString();
@@ -532,16 +536,15 @@ internal static class RuntimeHandlers
 
     private static bool NodeHasProperty(Node node, string property)
     {
-        foreach (var entry in node.GetPropertyList())
-            if (entry.AsGodotDictionary()["name"].AsString() == property) return true;
+        foreach (var d in node.GetPropertyList())
+            if (d["name"].AsString() == property) return true;
         return false;
     }
 
     private static IEnumerable<string> NodePropertyNames(Node node)
     {
-        foreach (var entry in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = entry.AsGodotDictionary();
             var usage = (long)d["usage"];
             if ((usage & (long)PropertyUsageFlags.Storage) == 0 && (usage & (long)PropertyUsageFlags.Editor) == 0) continue;
             yield return d["name"].AsString();
@@ -551,14 +554,13 @@ internal static class RuntimeHandlers
     private static IEnumerable<string> NodeMethodNames(Node node)
     {
         foreach (var m in node.GetMethodList())
-            yield return m.AsGodotDictionary()["name"].AsString();
+            yield return m["name"].AsString();
     }
 
     private static Variant.Type PropertyHint(Node node, string property)
     {
-        foreach (var entry in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = entry.AsGodotDictionary();
             if (d["name"].AsString() == property) return (Variant.Type)(long)d["type"];
         }
         return Variant.Type.Nil;

@@ -4,6 +4,8 @@ public sealed class ServerOptions
 {
     public int AdapterPort { get; set; } = 4936;
     public bool ReadOnly { get; set; } = false;
+    /// Gates tools tagged Unsafe (e.g. eval_expression). Off by default.
+    public bool AllowUnsafe { get; set; } = false;
 
     public static ServerOptions FromArgs(string[] args)
     {
@@ -13,6 +15,8 @@ public sealed class ServerOptions
             o.AdapterPort = envPort;
         if (Environment.GetEnvironmentVariable("GODOT_MCP_READ_ONLY") is { } ro && (ro == "1" || ro.Equals("true", StringComparison.OrdinalIgnoreCase)))
             o.ReadOnly = true;
+        if (Environment.GetEnvironmentVariable("GODOT_MCP_ALLOW_UNSAFE") is { } au && (au == "1" || au.Equals("true", StringComparison.OrdinalIgnoreCase)))
+            o.AllowUnsafe = true;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -22,6 +26,8 @@ public sealed class ServerOptions
                     o.AdapterPort = p; break;
                 case "--read-only":
                     o.ReadOnly = true; break;
+                case "--allow-unsafe":
+                    o.AllowUnsafe = true; break;
                 case "--help" or "-h":
                     PrintHelp();
                     Environment.Exit(0);
@@ -34,11 +40,12 @@ public sealed class ServerOptions
     private static void PrintHelp()
     {
         Console.Error.WriteLine("godot-mcp-server");
-        Console.Error.WriteLine("  --port <n>     TCP port for Godot adapters to connect to (default 4936).");
-        Console.Error.WriteLine("  --read-only    Reject any tool call that mutates editor/runtime state.");
-        Console.Error.WriteLine("  --help         Show this help.");
+        Console.Error.WriteLine("  --port <n>       TCP port for Godot adapters to connect to (default 4936).");
+        Console.Error.WriteLine("  --read-only      Reject any tool call that mutates editor/runtime state.");
+        Console.Error.WriteLine("  --allow-unsafe   Allow tools tagged 'unsafe' (e.g. eval_expression). Off by default.");
+        Console.Error.WriteLine("  --help           Show this help.");
         Console.Error.WriteLine();
         Console.Error.WriteLine("Environment:");
-        Console.Error.WriteLine("  GODOT_MCP_PORT, GODOT_MCP_READ_ONLY (1/true)");
+        Console.Error.WriteLine("  GODOT_MCP_PORT, GODOT_MCP_READ_ONLY, GODOT_MCP_ALLOW_UNSAFE (1/true)");
     }
 }

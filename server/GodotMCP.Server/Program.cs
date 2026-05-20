@@ -21,11 +21,14 @@ RuntimeTools.Register(tools, adapters);
 Log($"Registered {tools.Count} tools.");
 
 if (options.ReadOnly)
-    Log("Read-only mode is enabled (mutation tools will be enforced at the adapter).");
+    Log("Read-only mode is enabled (mutation tools will be rejected before reaching the adapter).");
+if (options.AllowUnsafe)
+    Log("Unsafe tools (eval_expression) are ENABLED via --allow-unsafe.");
 
 var stdin = Console.In;
 // Use Console.Out directly; on .NET stdio is binary-safe enough for newline-delimited JSON.
 var stdout = Console.Out;
 
-var mcp = new McpServer(tools, stdin, stdout, Log, options.ReadOnly);
+var mcp = new McpServer(tools, stdin, stdout, Log, options.ReadOnly, options.AllowUnsafe);
+using var events = new EventBridge(adapters, mcp, Log);
 await mcp.RunAsync(cts.Token);

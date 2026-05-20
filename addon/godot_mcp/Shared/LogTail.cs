@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Godot;
+using FileAccess = System.IO.FileAccess;
 
 namespace GodotMcp.Shared;
 

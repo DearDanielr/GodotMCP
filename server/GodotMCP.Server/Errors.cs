@@ -15,6 +15,7 @@ public static class ErrorCodes
     public const string BuildFailed = "build_failed";
     public const string WrongThread = "wrong_thread";
     public const string ReadOnly = "read_only";
+    public const string UnsafeDisabled = "unsafe_disabled";
     public const string Internal = "internal_error";
     public const string Unsupported = "unsupported";
 }

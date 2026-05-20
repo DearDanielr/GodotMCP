@@ -13,6 +13,10 @@ namespace GodotMcp.Shared;
 /// Handler that runs on the main thread. May throw AdapterError for typed failures.
 public delegate JsonNode? AdapterHandler(JsonObject args);
 
+/// Async handler — used by tools that span multiple frames (e.g. runtime_step_frames
+/// awaits N process_frame signals). Starts on the main thread.
+public delegate Task<JsonNode?> AsyncAdapterHandler(JsonObject args);
+
 public sealed class AdapterError : Exception
 {
     public string Code { get; }
@@ -38,6 +42,7 @@ public static class AdapterErrorExtensions
 public abstract partial class AdapterBase : Node
 {
     private readonly Dictionary<string, AdapterHandler> _handlers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AsyncAdapterHandler> _asyncHandlers = new(StringComparer.Ordinal);
     private MainThreadDispatcher _dispatcher = null!;
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
@@ -51,11 +56,15 @@ public abstract partial class AdapterBase : Node
     public int Port { get; set; } = 4936;
     public string Host { get; set; } = "127.0.0.1";
 
+    /// Exposed so handlers (e.g. property watches) can push events to the server.
+    public MainThreadDispatcher Dispatcher => _dispatcher;
+
     public override void _EnterTree()
     {
         _dispatcher = new MainThreadDispatcher { Name = "MainThreadDispatcher" };
         AddChild(_dispatcher);
         RegisterHandlers(_handlers);
+        RegisterAsyncHandlers(_asyncHandlers);
 
         var envPort = OS.GetEnvironment("GODOT_MCP_PORT");
         if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out var p) && p > 0)
@@ -76,6 +85,38 @@ public abstract partial class AdapterBase : Node
     }
 
     protected abstract void RegisterHandlers(Dictionary<string, AdapterHandler> handlers);
+    /// Override to add async handlers (multi-frame work). Default = no async handlers.
+    protected virtual void RegisterAsyncHandlers(Dictionary<string, AsyncAdapterHandler> handlers) { }
+
+    /// Fire an event to the server (which forwards it to the MCP client as a
+    /// notification). Used by watches, structured log streams, etc. Best-effort:
+    /// silently drops if the socket isn't connected.
+    public async Task EmitEventAsync(string name, JsonNode? payload, CancellationToken ct = default)
+    {
+        NetworkStream? stream;
+        lock (_socketLock) stream = _stream;
+        if (stream is null) return;
+
+        var frame = new JsonObject
+        {
+            ["type"] = "event",
+            ["name"] = name,
+            ["payload"] = payload?.DeepClone(),
+        };
+        try
+        {
+            await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+            try { await FrameProtocol.WriteFrameAsync(stream, frame.ToJsonString(), ct).ConfigureAwait(false); }
+            finally { _writeLock.Release(); }
+        }
+        catch { /* socket likely closed */ }
+    }
+
+    /// Fire-and-forget variant of EmitEventAsync, callable from the main thread.
+    public void EmitEvent(string name, JsonNode? payload)
+    {
+        _ = EmitEventAsync(name, payload);
+    }
 
     private async Task RunAsync(CancellationToken ct)
     {
@@ -149,10 +190,20 @@ public abstract partial class AdapterBase : Node
         JsonNode response;
         try
         {
-            if (!_handlers.TryGetValue(action, out var handler))
+            JsonNode? result;
+            if (_asyncHandlers.TryGetValue(action, out var asyncHandler))
+            {
+                result = await _dispatcher.RunAsync<JsonNode?>(() => asyncHandler(args), ct).ConfigureAwait(false);
+            }
+            else if (_handlers.TryGetValue(action, out var handler))
+            {
+                result = await _dispatcher.RunAsync<JsonNode?>(() => handler(args), ct).ConfigureAwait(false);
+            }
+            else
+            {
                 throw new AdapterError("action_not_found", $"Adapter '{Surface}' does not implement action '{action}'.");
+            }
 
-            JsonNode? result = await _dispatcher.RunAsync<JsonNode?>(() => handler(args), ct).ConfigureAwait(false);
             response = new JsonObject
             {
                 ["type"] = "response",

@@ -83,11 +83,12 @@ Connection order doesn't matter. The adapters retry with backoff, so you can lau
 | --- | --- | --- |
 | `--port <n>` / `GODOT_MCP_PORT` | `4936` | TCP port for adapters to connect to |
 | `--read-only` / `GODOT_MCP_READ_ONLY=1` | off | Reject any tool call that would mutate editor or runtime state |
+| `--allow-unsafe` / `GODOT_MCP_ALLOW_UNSAFE=1` | off | Enable tools tagged `unsafe` (currently `editor_eval_expression`, `runtime_eval_expression`) |
 | `--help` | — | Print usage |
 
 Set `GODOT_MCP_PORT` in your shell before launching Godot if you've changed the server's port — the editor and runtime adapters read the same variable.
 
-## Available tools (v0.2)
+## Available tools (v0.3)
 
 **Built-in**
 
@@ -102,10 +103,12 @@ State / introspection
 - `editor_get_class_reference` — ClassDB methods/properties/signals for any class
 - `editor_resolve_id` — instance id → current path
 
-Listings (so the AI knows what's available without guessing)
+Listings
 - `editor_list_classes` — filterable by inheritance / substring / concrete-only
 - `editor_list_node_methods` / `editor_list_node_properties` / `editor_list_node_signals` / `editor_list_node_groups`
 - `editor_list_input_actions`
+- `editor_list_project_settings` — filterable by prefix
+- `editor_list_files` — directory walk with optional recursion / extension filter
 
 Search
 - `editor_find_nodes` — by type, name substring, group membership
@@ -115,32 +118,87 @@ Observation (the AI's eyes and ears)
 - `editor_get_logs` — tails the Godot log file, with `since_last_call` for incremental polling
 - `editor_screenshot_viewport` — main viewport PNG, returned as an MCP image content block
 
-Mutation
+Scene mutation
 - `editor_add_node`, `editor_remove_node`
 - `editor_set_node_property`, `editor_get_node_property`
 - `editor_set_node_properties` — **bulk** version, one round trip for many edits
 - `editor_save_scene`
+- `editor_open_scene` — open a `.tscn`
+- `editor_create_scene` — pack a subtree into a new `.tscn`
+- `editor_instantiate_scene` — add a `.tscn` as child of a node
 - `editor_attach_script`
 
 Scripts & build
 - `editor_read_script`, `editor_write_script`, `editor_patch_script` (anchor-based)
-- `editor_build_project` — shells out to `dotnet build`; required after creating C# scripts
+- `editor_reload_scripts` — trigger a filesystem rescan
+- `editor_build_project` — `dotnet build`; returns **structured `errors`/`warnings`** arrays parsed from MSBuild output ({file, line, severity, code, message}), plus raw stdout/stderr
+
+Project settings
+- `editor_get_project_setting`, `editor_set_project_setting`, `editor_save_project_settings`
+
+Input-map editing
+- `editor_add_input_action`, `editor_remove_input_action`
+- `editor_bind_input_event` (event kinds: `key`, `mouse_button`, `joy_button`, `joy_axis`)
+- `editor_unbind_input_events`
+
+Resources (.tres / .res)
+- `editor_read_resource`, `editor_write_resource` (create with `create: true, type: ...`)
+
+Play control
+- `editor_play_scene` — play current, main, or a specific scene
+- `editor_stop_play`, `editor_is_playing`
+
+Eval (UNSAFE — requires `--allow-unsafe`)
+- `editor_eval_expression` — runs a Godot Expression in the editor
 
 **Runtime surface**
 
+Introspection
 - `runtime_get_tree` — live SceneTree with `max_depth`
 - `runtime_get_node_property` / `runtime_set_node_property`
 - `runtime_set_node_properties` — bulk
 - `runtime_call_method`
 - `runtime_get_performance` — FPS, frame time, physics time, node/draw counts
-- `runtime_inject_action` — fire an InputMap action
-- `runtime_set_paused`
-- `runtime_get_logs`, `runtime_screenshot`
 - `runtime_resolve_id`, `runtime_list_node_methods`, `runtime_list_node_properties`, `runtime_list_node_signals`, `runtime_list_node_groups`, `runtime_get_nodes_in_group`
 - `runtime_find_nodes`
-- `runtime_snapshot_state` / `runtime_restore_state` — "try, observe, undo" experimentation loop
 
-Mutation tools have `Mutates = true` in the registry and are rejected when the server is started with `--read-only`.
+Observation
+- `runtime_get_logs`, `runtime_screenshot`
+
+Input
+- `runtime_inject_action` — fire an InputMap action
+- `runtime_set_paused`
+- `runtime_step_frames` — advance N frames deterministically (async; multi-frame await)
+
+Signals
+- `runtime_connect_signal`, `runtime_disconnect_signal`, `runtime_emit_signal`
+
+Groups
+- `runtime_add_to_group`, `runtime_remove_from_group`
+
+Animation
+- `runtime_animation_list`, `runtime_animation_play`, `runtime_animation_stop`, `runtime_animation_seek`
+
+Physics queries
+- `runtime_physics_raycast_2d`, `runtime_physics_raycast_3d`
+- `runtime_physics_overlap_point_2d`
+
+Scene ops
+- `runtime_instantiate_scene` — load `.tscn` and add at runtime
+- `runtime_free_node` — `QueueFree`
+- `runtime_change_scene` — `SceneTree.ChangeSceneToFile`
+
+State experimentation
+- `runtime_snapshot_state` / `runtime_restore_state` — "try, observe, undo" loop
+
+Push-based property watches
+- `runtime_watch_property` — server pushes `notifications/message` with `name: 'watch_changed'` each time the JSON value differs (and `watch_ended` when the node is freed)
+- `runtime_unwatch_property`, `runtime_list_watches`
+
+Eval (UNSAFE — requires `--allow-unsafe`)
+- `runtime_eval_expression`
+
+Mutation tools have `Mutates = true` in the registry and are rejected when the server is started with `--read-only`. Tools tagged `Unsafe = true` are additionally gated by `--allow-unsafe`.
 
 ### Stable instance ids
 
@@ -166,18 +224,14 @@ Screenshot tools return an MCP `image` content block (base64 PNG with `mimeType`
 
 **Read-only mode.** `--read-only` blocks any tool tagged `Mutates: true` at the server before it reaches the adapter. Useful when you want the AI to inspect freely without risk of touching the scene.
 
-## What's not in v0.2
+**Unsafe mode.** `--allow-unsafe` is a separate gate for tools tagged `Unsafe: true` (currently `editor_eval_expression` and `runtime_eval_expression`). Off by default because Expression eval has unbounded reach (any registered class, any method).
 
-The architecture supports these; they're future handlers, not future redesigns:
+**Push notifications.** The server forwards adapter events to the MCP client as `notifications/message` (level=info, data.kind="godot.event"). `runtime_watch_property` uses this channel to push `watch_changed` / `watch_ended` events instead of forcing the client to poll.
 
-- `runtime_step_frames` — single-step the game one frame at a time. Needs the handler dispatch to support async (await N `process_frame` signals).
-- Push-based `watch_property` — current alternative is polling `runtime_get_node_property`. Push needs a server→client notification channel.
-- Signal connect/disconnect, group add/remove from script
-- Animation track / tilemap helpers
-- Input-map editing (add/bind actions from outside)
-- Physics raycast / overlap queries at runtime
-- `eval_expression` — deliberately deferred; high power but unbounded risk
+**Async handlers.** Adapters can register async handlers (`Task<JsonNode?>`) that span multiple frames — used by `runtime_step_frames`, which awaits N `SceneTree.ProcessFrame` signals. The main-thread dispatcher routes both sync and async handlers; signals resume on the main thread because Godot fires them there.
+
+**Structured build errors.** `editor_build_project` parses MSBuild output into `errors[]` / `warnings[]` arrays of `{file, line, column?, severity, code, message}`. File paths are normalized to `res://` when inside the project. Raw `stdout`/`stderr` remain in the response for cases the regex misses.
 
 ## Status
 
-v0.2 — vision (screenshots + logs), script editing + C# build hook, discoverability, search, bulk edits, snapshot/restore, stable instance ids, did-you-mean error hints. Not yet exercised against a real Godot 4.6 build in this repo's CI; if you run into an API drift, please open an issue with the Godot version and the failing handler.
+v0.3 — push notifications, watches, step_frames, signals/groups/animation/physics queries at runtime, input-map editing, project settings R/W, scene CRUD, structured build errors, play/stop scene, eval (unsafe). Compiles cleanly against Godot SDK 4.6.x; if you run into an API drift on a different patch release, please open an issue with the Godot version and the failing handler.

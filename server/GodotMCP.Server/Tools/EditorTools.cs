@@ -263,11 +263,201 @@ public static class EditorTools
 
         Add(registry, adapters, new ToolDefinition(
             Name: "editor_build_project",
-            Description: "Runs 'dotnet build' in the project root. Required after creating/modifying C# scripts before the new types become instantiable. Returns stdout, stderr, exit code, and elapsed ms. Takes 5-60s; use the long timeout.\nExample: {} (no args).",
+            Description: "Runs 'dotnet build' in the project root. Required after creating/modifying C# scripts before the new types become instantiable. Returns structured 'errors' / 'warnings' arrays of {file, line, severity, code, message} parsed from MSBuild output, plus raw stdout/stderr. Takes 5-60s; use the long timeout.\nExample: {} (no args).",
             InputSchema: Object(),
             RequiresSurface: Surface.Editor,
             Handler: null!,
             Mutates: true));
+
+        // ─── play / stop ───────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_play_scene",
+            Description: "Tells the editor to start playing. With no args plays the currently edited scene (or main scene if none open). With 'scene_path' plays that scene specifically. Spawns a child Godot process; observe via runtime_* tools once the game's autoload connects.\nExample: { scene_path: 'res://scenes/main.tscn' } or {} for current.",
+            InputSchema: Object(("scene_path", String("Optional res:// path to a specific scene to play."), false)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_stop_play",
+            Description: "Stops the currently playing scene (if any).",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_is_playing",
+            Description: "Returns whether the editor is currently playing a scene, and which scene path is running.",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        // ─── scene open / create / instantiate ─────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_open_scene",
+            Description: "Opens a .tscn file in the editor (becomes the edited scene).\nExample: { path: 'res://scenes/level1.tscn' }.",
+            InputSchema: Object(("path", String("res:// path of a .tscn file."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_create_scene",
+            Description: "Packs the currently edited scene root (or a subtree) into a new .tscn file. Use this to extract a node tree into a reusable scene.\nExample: { out_path: 'res://scenes/enemy.tscn', path: 'Enemies/Goblin' } or { out_path: '...', path: '.' } for the whole scene.",
+            InputSchema: Object(
+                ("out_path", String("Output res:// path. Must end in '.tscn'."), true),
+                ("path", String("Subtree root to pack. '.' or omitted = edited scene root."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_instantiate_scene",
+            Description: "Loads a .tscn and instantiates it as a child of an existing node in the edited scene.\nExample: { scene_path: 'res://scenes/enemy.tscn', parent_path: 'Enemies', name: 'Goblin1' }.",
+            InputSchema: Object(
+                ("scene_path", String("res:// path of the .tscn to instantiate."), true),
+                ("parent_path", String("Parent NodePath in the edited scene. '.' = root."), true),
+                ("name", String("Optional name for the instantiated node."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── project settings ──────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_get_project_setting",
+            Description: "Reads a ProjectSettings value, e.g. 'application/config/name', 'display/window/size/viewport_width'.\nExample: { key: 'application/config/name' }.",
+            InputSchema: Object(("key", String("Setting key (slash-delimited)."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_set_project_setting",
+            Description: "Writes a ProjectSettings value. Pass persist:true to write project.godot (otherwise the change is only in memory).\nExample: { key: 'display/window/size/viewport_width', value: 1920, persist: true }.",
+            InputSchema: Object(
+                ("key", String("Setting key."), true),
+                ("value", AnyValue("New value."), true),
+                ("persist", Bool("Save to project.godot. Default false."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_list_project_settings",
+            Description: "Lists all ProjectSettings keys (optionally filtered by prefix). Use this to discover what's available.\nExample: { prefix: 'physics/' }.",
+            InputSchema: Object(("prefix", String("Filter to keys starting with this prefix."), false)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_save_project_settings",
+            Description: "Persists in-memory ProjectSettings changes to project.godot.",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── input map editing ─────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_add_input_action",
+            Description: "Defines a new action in the InputMap and persists it. Use editor_bind_input_event to add keys/buttons.\nExample: { action: 'jump', deadzone: 0.2 }.",
+            InputSchema: Object(
+                ("action", String("Action name."), true),
+                ("deadzone", Number("Deadzone for analog inputs (default 0.5)."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_remove_input_action",
+            Description: "Removes an action from the InputMap.",
+            InputSchema: Object(("action", String("Action name."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_bind_input_event",
+            Description: "Adds a key/button/axis event to an existing action.\n'event' shapes: {kind:'key', key:'space'|'a'|'escape'|...}, {kind:'mouse_button', button:1}, {kind:'joy_button', button:0}, {kind:'joy_axis', axis:0, value:1.0}.\nExample: { action: 'jump', event: { kind: 'key', key: 'space' } }.",
+            InputSchema: Object(
+                ("action", String("Action name (must exist)."), true),
+                ("event", Object(
+                    ("kind", String("One of 'key', 'mouse_button', 'joy_button', 'joy_axis'."), true),
+                    ("key", String("For 'key': key string like 'space', 'a', 'escape'."), false),
+                    ("button", Integer("For 'mouse_button' / 'joy_button': button index."), false),
+                    ("axis", Integer("For 'joy_axis': axis index."), false),
+                    ("value", Number("For 'joy_axis': axis value, e.g. 1.0 or -1.0."), false)
+                ), true)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_unbind_input_events",
+            Description: "Removes all events bound to an action (action itself remains).",
+            InputSchema: Object(("action", String("Action name."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── resources & files ─────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_read_resource",
+            Description: "Reads a .tres / .res / built-in resource as JSON. Returns {path, class, properties}.\nExample: { path: 'res://data/enemy_stats.tres' }.",
+            InputSchema: Object(("path", String("res:// path."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_write_resource",
+            Description: "Writes (creates or modifies) a Resource file. To create new, set create:true and 'type' to the resource class. 'properties' is a {name: value} map applied before save.\nExample (modify): { path: 'res://data/foo.tres', properties: { hp: 100 } }.\nExample (create): { path: 'res://data/bar.tres', create: true, type: 'Resource', properties: { ... } }.",
+            InputSchema: Object(
+                ("path", String("res:// path."), true),
+                ("create", Bool("Create new resource. Default false."), false),
+                ("type", String("Resource class name (required if create:true)."), false),
+                ("properties", AnyValue("Object map of properties to set."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_list_files",
+            Description: "Lists files in a project directory. Use 'recursive' to walk subdirectories; 'extension' to filter by extension.\nExample: { dir: 'res://scenes', recursive: true, extension: '.tscn' }.",
+            InputSchema: Object(
+                ("dir", String("res:// directory. Default 'res://'."), false),
+                ("recursive", Bool("Walk subdirectories. Default false."), false),
+                ("extension", String("Filter to this extension (include the dot)."), false),
+                ("limit", Integer("Max files to return. Default 500."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_reload_scripts",
+            Description: "Triggers an editor filesystem rescan so newly created/written files become visible. Call this after writing files outside the editor's own write path.",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── eval (UNSAFE) ─────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_eval_expression",
+            Description: "Evaluates a Godot Expression string in the editor process. Powerful but unbounded — disabled by default; start server with --allow-unsafe to enable. 'inputs' is a {name: value} map of named inputs that appear in the expression.\nExample: { expression: '2 + 2' } or { expression: 'a * b', inputs: { a: 3, b: 4 } }.",
+            InputSchema: Object(
+                ("expression", String("Expression source (GDScript-like)."), true),
+                ("inputs", AnyValue("Optional {name: value} map of named inputs."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true,
+            Unsafe: true));
     }
 
     private static void Add(ToolRegistry registry, AdapterRegistry adapters, ToolDefinition partial)
