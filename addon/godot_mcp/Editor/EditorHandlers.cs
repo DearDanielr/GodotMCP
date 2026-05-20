@@ -54,6 +54,8 @@ internal static class EditorHandlers
 
         // ── extras (v0.3): play, settings, input-map, resources, eval ──────
         EditorHandlersExtra.Register(h);
+        // ── v0.4: tree edits, filesystem, autoloads, deps, focus, tilemap ──
+        EditorHandlersV04.Register(h);
     }
 
     private static EditorInterface EI => EditorInterface.Singleton;
@@ -505,8 +507,14 @@ internal static class EditorHandlers
             throw new AdapterError("type_not_instantiable", $"'{type}' is not a Node.");
 
         node.Name = name ?? type;
-        parent.AddChild(node);
-        node.Owner = root;
+
+        var undo = EI.GetEditorUndoRedo();
+        undo.CreateAction($"MCP add {node.Name} ({type})", customContext: root);
+        undo.AddDoMethod(parent, Node.MethodName.AddChild, node);
+        undo.AddDoProperty(node, Node.PropertyName.Owner, root);
+        undo.AddDoReference(node);
+        undo.AddUndoMethod(parent, Node.MethodName.RemoveChild, node);
+        undo.CommitAction();
 
         return new JsonObject
         {
@@ -526,18 +534,42 @@ internal static class EditorHandlers
             throw new AdapterError("invalid_args", "Cannot remove the scene root.");
 
         string path = root.GetPathTo(node).ToString();
-        var parent = node.GetParent();
-        parent?.RemoveChild(node);
-        node.Free();
+        var parent = node.GetParent()
+            ?? throw new AdapterError("invalid_args", "Node has no parent.");
+        int index = node.GetIndex();
+        var owner = node.Owner;
+
+        var undo = EI.GetEditorUndoRedo();
+        undo.CreateAction($"MCP remove {node.Name}", customContext: root);
+        undo.AddDoMethod(parent, Node.MethodName.RemoveChild, node);
+        undo.AddUndoMethod(parent, Node.MethodName.AddChild, node);
+        undo.AddUndoMethod(parent, Node.MethodName.MoveChild, node, index);
+        undo.AddUndoProperty(node, Node.PropertyName.Owner, owner ?? root);
+        undo.AddUndoReference(node);
+        undo.CommitAction();
+
         return new JsonObject { ["removed"] = path };
     }
 
     private static JsonNode? SetNodeProperty(JsonObject args)
     {
+        var root = EI.GetEditedSceneRoot()
+            ?? throw new AdapterError("node_not_found", "No scene is currently being edited.");
         var node = ResolveNode(args);
         string property = ReqString(args, "property");
         var raw = args["value"] ?? throw new AdapterError("invalid_args", "Missing 'value'.");
-        ApplyPropertySet(node, property, raw);
+        if (!NodeHasProperty(node, property))
+            throw NotFound("Property", property, NodePropertyNames(node));
+
+        var hint = PropertyHint(node, property);
+        var newValue = WireJson.FromJson(raw, hint);
+        var oldValue = node.Get(property);
+
+        var undo = EI.GetEditorUndoRedo();
+        undo.CreateAction($"MCP set {property} on {node.Name}", customContext: root);
+        undo.AddDoProperty(node, property, newValue);
+        undo.AddUndoProperty(node, property, oldValue);
+        undo.CommitAction();
         return new JsonObject { ["set"] = property };
     }
 
@@ -545,7 +577,11 @@ internal static class EditorHandlers
     {
         var setsNode = args["sets"] as JsonArray
             ?? throw new AdapterError("invalid_args", "Missing array 'sets'.");
+        var root = EI.GetEditedSceneRoot()
+            ?? throw new AdapterError("node_not_found", "No scene is currently being edited.");
 
+        // Pre-resolve each item so we can build one undo action covering the whole batch.
+        var planned = new List<(Node node, string property, Variant oldValue, Variant newValue)>();
         var results = new JsonArray();
         int failed = 0;
         foreach (var item in setsNode)
@@ -556,7 +592,12 @@ internal static class EditorHandlers
                 var node = ResolveNode(obj);
                 string property = ReqString(obj, "property");
                 var raw = obj["value"] ?? throw new AdapterError("invalid_args", "Missing 'value'.");
-                ApplyPropertySet(node, property, raw);
+                if (!NodeHasProperty(node, property))
+                    throw NotFound("Property", property, NodePropertyNames(node));
+                var hint = PropertyHint(node, property);
+                var newValue = WireJson.FromJson(raw, hint);
+                var oldValue = node.Get(property);
+                planned.Add((node, property, oldValue, newValue));
                 results.Add(new JsonObject { ["ok"] = true, ["path"] = NodePathFor(node), ["property"] = property });
             }
             catch (AdapterError e)
@@ -564,6 +605,18 @@ internal static class EditorHandlers
                 failed++;
                 results.Add(new JsonObject { ["ok"] = false, ["error_code"] = e.Code, ["error"] = e.Message });
             }
+        }
+
+        if (planned.Count > 0)
+        {
+            var undo = EI.GetEditorUndoRedo();
+            undo.CreateAction($"MCP set {planned.Count} properties", customContext: root);
+            foreach (var (n, p, oldV, newV) in planned)
+            {
+                undo.AddDoProperty(n, p, newV);
+                undo.AddUndoProperty(n, p, oldV);
+            }
+            undo.CommitAction();
         }
         return new JsonObject { ["count"] = results.Count, ["failed"] = failed, ["results"] = results };
     }
@@ -595,6 +648,8 @@ internal static class EditorHandlers
 
     private static JsonNode? AttachScript(JsonObject args)
     {
+        var root = EI.GetEditedSceneRoot()
+            ?? throw new AdapterError("node_not_found", "No scene is currently being edited.");
         var node = ResolveNode(args);
         string scriptPath = ReqString(args, "script_path");
         if (!ResourceLoader.Exists(scriptPath))
@@ -602,7 +657,13 @@ internal static class EditorHandlers
         var res = ResourceLoader.Load(scriptPath);
         if (res is not Script script)
             throw new AdapterError("invalid_args", $"Resource at '{scriptPath}' is not a Script.");
-        node.SetScript(script);
+        var oldScript = node.GetScript();
+
+        var undo = EI.GetEditorUndoRedo();
+        undo.CreateAction($"MCP attach script to {node.Name}", customContext: root);
+        undo.AddDoMethod(node, GodotObject.MethodName.SetScript, script);
+        undo.AddUndoMethod(node, GodotObject.MethodName.SetScript, oldScript);
+        undo.CommitAction();
         return new JsonObject { ["attached"] = scriptPath, ["path"] = NodePathFor(node) };
     }
 
@@ -774,14 +835,6 @@ internal static class EditorHandlers
         if (sink.Count >= limit) return;
         sink.Add(root.GetPathTo(node).ToString());
         foreach (var c in node.GetChildren()) CollectPaths(root, c, sink, limit);
-    }
-
-    private static void ApplyPropertySet(Node node, string property, JsonNode value)
-    {
-        if (!NodeHasProperty(node, property))
-            throw NotFound("Property", property, NodePropertyNames(node));
-        var hint = PropertyHint(node, property);
-        node.Set(property, WireJson.FromJson(value, hint));
     }
 
     private static bool NodeHasProperty(Node node, string property)

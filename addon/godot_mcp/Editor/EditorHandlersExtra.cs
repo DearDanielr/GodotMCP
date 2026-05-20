@@ -156,8 +156,14 @@ internal static class EditorHandlersExtra
             ?? throw new AdapterError("node_not_found", $"No parent at '{parentPath}'.");
 
         if (!string.IsNullOrEmpty(name)) inst.Name = name;
-        parent.AddChild(inst);
-        inst.Owner = root;
+
+        var undo = EI.GetEditorUndoRedo();
+        undo.CreateAction($"MCP instantiate {scenePath}", customContext: root);
+        undo.AddDoMethod(parent, Node.MethodName.AddChild, inst);
+        undo.AddDoProperty(inst, Node.PropertyName.Owner, root);
+        undo.AddDoReference(inst);
+        undo.AddUndoMethod(parent, Node.MethodName.RemoveChild, inst);
+        undo.CommitAction();
         return new JsonObject
         {
             ["path"] = root.GetPathTo(inst).ToString(),

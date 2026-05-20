@@ -446,6 +446,230 @@ public static class EditorTools
             Handler: null!,
             Mutates: true));
 
+        // ═══════════════════════════════════════════════════════════════
+        // v0.4 additions: tree edits, filesystem, autoloads, deps, focus, tilemap.
+        // All editor mutating tools also register as UndoRedo entries so the user
+        // can Ctrl-Z any AI-initiated change in the editor.
+        // ═══════════════════════════════════════════════════════════════
+
+        // ─── tree editing ──────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_reparent_node",
+            Description: "Reparents a node under a new parent in the edited scene. Refuses cycles. By default preserves the node's global transform (Node2D/Node3D); set keep_global_transform:false to keep local transform.\nExample: { path: 'Old/Player', new_parent_path: 'New' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("new_parent_path", String("NodePath of the new parent in the edited scene."), true),
+                ("keep_global_transform", Bool("Preserve global transform across the reparent. Default true."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_move_node",
+            Description: "Moves a node to a new index in its parent's children list. Affects sibling order (matters for UI layout, Canvas draw order, etc.). Negative indices count from the end; out-of-range values are clamped.\nExample: { path: 'HUD/Label', new_index: 0 }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("new_index", Integer("New child index within the parent. Negative = from end."), true)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_duplicate_node",
+            Description: "Duplicates a node (and its subtree, with scripts/groups/signals) as a sibling. Returns the new node's path and id.\nExample: { path: 'Enemies/Goblin', new_name: 'Goblin2' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("new_name", String("Optional name for the duplicate. Defaults to Godot's auto-numbered suffix."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── filesystem ────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_create_folder",
+            Description: "Creates a directory under res://. No-ops if it already exists. Triggers a filesystem rescan.\nExample: { path: 'res://scenes/enemies' }.",
+            InputSchema: Object(("path", String("res:// directory path."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_delete_file",
+            Description: "Deletes a file or empty directory under res://. Pass recursive:true to delete a directory with contents. Refuses to delete the project root.\nExample: { path: 'res://scenes/unused.tscn' }.",
+            InputSchema: Object(
+                ("path", String("res:// path of file or directory."), true),
+                ("recursive", Bool("Allow deleting a non-empty directory. Default false."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_rename_file",
+            Description: "Renames a file or directory in place (without moving it). 'new_name' is just the basename, no slashes — use editor_move_file to relocate.\nExample: { path: 'res://scripts/old.gd', new_name: 'new.gd' }.",
+            InputSchema: Object(
+                ("path", String("res:// path of file or directory."), true),
+                ("new_name", String("New basename (no path separators)."), true)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_move_file",
+            Description: "Moves (or renames-and-moves) a file or directory under res://. Creates intermediate directories if needed. Does NOT rewrite references to the old path — use editor_find_resource_users first.\nExample: { path: 'res://a/x.tres', new_path: 'res://data/x.tres' }.",
+            InputSchema: Object(
+                ("path", String("Source res:// path."), true),
+                ("new_path", String("Destination res:// path."), true)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── autoloads ─────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_list_autoloads",
+            Description: "Lists all autoloads defined in project.godot. Returns name, target path, and whether each is a global singleton.",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_add_autoload",
+            Description: "Adds a new autoload entry. 'singleton:true' (default) makes it globally accessible by name. Autoload changes typically take effect after restarting the editor.\nExample: { name: 'GameState', path: 'res://autoloads/game_state.gd', singleton: true }.",
+            InputSchema: Object(
+                ("name", String("Autoload identifier (no spaces or slashes)."), true),
+                ("path", String("res:// path to a Script or PackedScene."), true),
+                ("singleton", Bool("Expose globally as a singleton. Default true."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_remove_autoload",
+            Description: "Removes an autoload entry from project.godot.",
+            InputSchema: Object(("name", String("Autoload name to remove."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── resource graph ────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_get_resource_dependencies",
+            Description: "Returns the resources a given .tscn / .tres / .gdshader directly depends on (forward edges in the dependency graph). Uses ResourceLoader.GetDependencies.\nExample: { path: 'res://scenes/main.tscn' }.",
+            InputSchema: Object(("path", String("res:// path."), true)),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_find_resource_users",
+            Description: "Returns the files (.tscn / .tres / .gd / .cs / .gdshader) that reference a given resource path. Backward edges in the dependency graph — call this before deleting or moving an asset.\nExample: { path: 'res://art/player.png' }.",
+            InputSchema: Object(
+                ("path", String("res:// path of the resource to find users of."), true),
+                ("limit", Integer("Max hits. Default 200."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        // ─── selection / focus ─────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_select_node",
+            Description: "Selects a node (or many) in the editor's Scene dock. With 'extend:true' adds to the existing selection; otherwise replaces it. Gives the human watching the AI a visible cue of what's being touched.\nExample: { path: 'Player' } or { paths: ['A','B'], extend: true }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("paths", Array(String("NodePath"), "Optional list of paths to select."), false),
+                ("extend", Bool("Add to existing selection rather than replacing. Default false."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_focus_node",
+            Description: "Selects a node and centers the editor viewport on it (calls EditorInterface.edit_node).\nExample: { path: 'Enemies/Boss' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        // ─── tilemap ───────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_tilemap_get_cell",
+            Description: "Reads a single cell from a TileMapLayer (preferred in Godot 4.3+) or legacy TileMap node. 'layer' is ignored for TileMapLayer. Returns {source_id, atlas_coords, alternative_tile, empty}.\nExample: { path: 'World/Tiles', coords: {x:0,y:0} }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("coords", AnyValue("{x,y} integer cell coordinates."), true),
+                ("layer", Integer("Layer index (TileMap only). Default 0."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_tilemap_set_cell",
+            Description: "Sets a single cell. source_id=-1 clears the cell.\nExample: { path: 'World/Tiles', coords: {x:3,y:5}, source_id: 0, atlas_coords: {x:1,y:2} }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("coords", AnyValue("{x,y} integer cell coordinates."), true),
+                ("source_id", Integer("Tileset source id. -1 to clear. Default -1."), false),
+                ("atlas_coords", AnyValue("{x,y} integer atlas coordinates. Default {0,0}."), false),
+                ("alternative_tile", Integer("Alternative tile index. Default 0."), false),
+                ("layer", Integer("Layer index (TileMap only). Default 0."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_tilemap_paint_rect",
+            Description: "Paints (or clears) every cell in an inclusive rectangle from {from} to {to}. One undo entry covers the whole batch.\nExample: { path: 'World/Tiles', from: {x:0,y:0}, to: {x:9,y:0}, source_id: 0, atlas_coords: {x:0,y:0} }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("from", AnyValue("{x,y} corner of the rect."), true),
+                ("to", AnyValue("{x,y} other corner."), true),
+                ("source_id", Integer("Tileset source id. -1 to clear."), false),
+                ("atlas_coords", AnyValue("{x,y} atlas coordinates."), false),
+                ("alternative_tile", Integer("Alternative tile index."), false),
+                ("layer", Integer("Layer index (TileMap only)."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_tilemap_get_used_cells",
+            Description: "Returns the list of cells that contain a tile.\nExample: { path: 'World/Tiles', layer: 0 }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("layer", Integer("Layer index (TileMap only). Default 0."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "editor_tilemap_clear",
+            Description: "Clears all cells. For TileMap, pass 'layer' to clear a single layer; omit (or -1) to clear all layers. TileMapLayer always clears the whole layer.\nExample: { path: 'World/Tiles' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("layer", Integer("Layer index (TileMap only). -1 = all layers."), false)
+            ),
+            RequiresSurface: Surface.Editor,
+            Handler: null!,
+            Mutates: true));
+
         // ─── eval (UNSAFE) ─────────────────────────────────────────────
         Add(registry, adapters, new ToolDefinition(
             Name: "editor_eval_expression",
