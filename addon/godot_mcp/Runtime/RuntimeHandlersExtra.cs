@@ -235,6 +235,7 @@ internal static partial class RuntimeHandlersExtra
 
     private static Vector2 AsVector2(JsonNode n)
     {
+        n = UnstringifyIfNeeded(n);
         if (n is JsonObject o) return new Vector2((float)(o["x"]?.GetValue<double>() ?? 0), (float)(o["y"]?.GetValue<double>() ?? 0));
         if (n is JsonArray a && a.Count >= 2) return new Vector2((float)(a[0]?.GetValue<double>() ?? 0), (float)(a[1]?.GetValue<double>() ?? 0));
         throw new AdapterError("invalid_args", "Expected {x,y} or [x,y].");
@@ -242,9 +243,27 @@ internal static partial class RuntimeHandlersExtra
 
     private static Vector3 AsVector3(JsonNode n)
     {
+        n = UnstringifyIfNeeded(n);
         if (n is JsonObject o) return new Vector3((float)(o["x"]?.GetValue<double>() ?? 0), (float)(o["y"]?.GetValue<double>() ?? 0), (float)(o["z"]?.GetValue<double>() ?? 0));
         if (n is JsonArray a && a.Count >= 3) return new Vector3((float)(a[0]?.GetValue<double>() ?? 0), (float)(a[1]?.GetValue<double>() ?? 0), (float)(a[2]?.GetValue<double>() ?? 0));
         throw new AdapterError("invalid_args", "Expected {x,y,z} or [x,y,z].");
+    }
+
+    /// Some MCP clients stringify untyped object args (e.g. {x:1,y:2} arrives as the
+    /// literal text). Detect and reparse so the downstream object/array checks see
+    /// real JsonObject/JsonArray nodes.
+    private static JsonNode UnstringifyIfNeeded(JsonNode n)
+    {
+        if (n is JsonValue v && v.TryGetValue<string>(out var s))
+        {
+            var t = s.AsSpan().TrimStart();
+            if (t.Length > 0 && (t[0] == '{' || t[0] == '['))
+            {
+                try { var parsed = JsonNode.Parse(s); if (parsed is not null) return parsed; }
+                catch { }
+            }
+        }
+        return n;
     }
 
     // ════════════════════════════════════════════════════════════════════

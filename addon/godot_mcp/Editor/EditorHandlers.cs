@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Godot;
 using GodotMcp.Shared;
 
@@ -50,12 +51,20 @@ internal static class EditorHandlers
         h["editor_read_script"] = ReadScript;
         h["editor_write_script"] = WriteScript;
         h["editor_patch_script"] = PatchScript;
-        h["editor_build_project"] = BuildProject;
+        // editor_build_project is registered via RegisterAsync below — building
+        // synchronously blocked the main-thread dispatcher for the full build
+        // duration, which made every other tool call queue behind it.
 
         // ── extras (v0.3): play, settings, input-map, resources, eval ──────
         EditorHandlersExtra.Register(h);
         // ── v0.4: tree edits, filesystem, autoloads, deps, focus, tilemap ──
         EditorHandlersV04.Register(h);
+    }
+
+    public static void RegisterAsync(Dictionary<string, AsyncAdapterHandler> h)
+    {
+        // Long-running handlers go here so they don't pin the main-thread dispatcher.
+        h["editor_build_project"] = BuildProjectAsync;
     }
 
     private static EditorInterface EI => EditorInterface.Singleton;
@@ -734,7 +743,20 @@ internal static class EditorHandlers
         return new JsonObject { ["patched"] = resPath, ["edits_applied"] = applied, ["bytes"] = content.Length };
     }
 
-    private static JsonNode? BuildProject(JsonObject args)
+    /// Async so the dispatcher's main-thread queue is not blocked for the full
+    /// build duration — other tool calls (status, get_state, etc.) keep working
+    /// while dotnet is running. The build process itself is spawned out-of-process
+    /// from Godot, so its stdio reads stay on background threads.
+    ///
+    /// Note about hot-reload: when the build writes a new GodotMcpProject.dll
+    /// the editor's C# integration will hot-reload the assembly shortly after.
+    /// That tears down the current adapter instance (this code!) and a fresh one
+    /// is created. Pending tool calls in flight at that exact moment may be
+    /// abandoned; the MCP client should poll mcp_status until it reconnects.
+    /// We do NOT call EditorInterface.GetResourceFilesystem().Scan() anymore —
+    /// the filesystem watcher already triggers a scan on its own, and forcing
+    /// a second one was making the reload more disruptive in practice.
+    private static async Task<JsonNode?> BuildProjectAsync(JsonObject args)
     {
         string projectRoot = ProjectSettings.GlobalizePath("res://");
         var sw = Stopwatch.StartNew();
@@ -750,25 +772,26 @@ internal static class EditorHandlers
         try { proc = Process.Start(psi) ?? throw new AdapterError("build_failed", "dotnet build failed to start."); }
         catch (Exception ex) { throw new AdapterError("build_failed", $"Could not run 'dotnet build': {ex.Message}. Is the .NET SDK on PATH?"); }
 
-        // Bounded wait so a hung compiler doesn't lock up Godot's main thread.
-        // 110s is just under the server's LongTimeout (120s) so the response can
-        // still make it back when we hit this ceiling.
-        if (!proc.WaitForExit(110_000))
+        // Bounded wait — same 110s ceiling as before, but async so the dispatcher stays free.
+        using var timeoutCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(110));
+        try
+        {
+            await proc.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new AdapterError("build_failed", "dotnet build timed out after 110s; the process was killed.");
+            throw new AdapterError("build_failed", "dotnet build timed out after 110s; the process was killed. If the editor holds the assembly locked, close the editor and build from a terminal, or use the editor's built-in Build button.");
         }
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
+
+        string stdout = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        string stderr = await proc.StandardError.ReadToEndAsync().ConfigureAwait(false);
         sw.Stop();
 
         bool ok = proc.ExitCode == 0;
-        // Trigger an editor filesystem scan so the new assembly is picked up.
-        EI.GetResourceFilesystem().Scan();
 
         // Parse MSBuild diagnostics into structured {file, line, severity, message}
-        // entries so the AI doesn't have to grep stdout. Includes both errors and
-        // warnings; the 'errors' / 'warnings' arrays split them for convenience.
+        // entries so the AI doesn't have to grep stdout.
         var diagnostics = EditorHandlersExtra.ParseBuildOutput(stdout + "\n" + stderr, projectRoot);
         var errors = new JsonArray();
         var warnings = new JsonArray();
@@ -791,6 +814,10 @@ internal static class EditorHandlers
             ["warnings"] = warnings,
             ["stdout"] = stdout,
             ["stderr"] = stderr,
+            // Heads-up so the client knows to poll mcp_status briefly after this.
+            ["reload_warning"] = ok
+                ? "Build succeeded. Godot's C# hot-reload may briefly disconnect the adapter; poll mcp_status until it reconnects before issuing further calls."
+                : null,
         };
     }
 

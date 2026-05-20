@@ -107,6 +107,25 @@ internal static class WireJson
     {
         if (node is null) return new Variant();
 
+        // Some MCP clients serialize untyped tool-call arguments as JSON strings
+        // (e.g. value:{x:100,y:200} arrives as the literal text "{\"x\":100,\"y\":200}").
+        // If the hint expects a structured type but we got a string that looks like
+        // JSON, parse it back to a node before continuing. Without this, Vector2/Color
+        // assignments either silently zero-out or throw "Invalid Color Name".
+        if (HintNeedsStructure(hint) && node is JsonValue jv && jv.TryGetValue<string>(out var maybeJson))
+        {
+            var t = maybeJson.AsSpan().TrimStart();
+            if (t.Length > 0 && (t[0] == '{' || t[0] == '['))
+            {
+                try
+                {
+                    var parsed = JsonNode.Parse(maybeJson);
+                    if (parsed is JsonObject or JsonArray) node = parsed;
+                }
+                catch { /* not JSON, fall through and let the per-hint path handle it */ }
+            }
+        }
+
         // Hint-driven conversion lets us produce a Vector2 / Color / etc. when we know the target.
         switch (hint)
         {
@@ -191,6 +210,13 @@ internal static class WireJson
             return new Color(s);
         return Colors.White;
     }
+
+    private static bool HintNeedsStructure(Variant.Type t) =>
+        t is Variant.Type.Vector2 or Variant.Type.Vector2I
+          or Variant.Type.Vector3 or Variant.Type.Vector3I
+          or Variant.Type.Vector4 or Variant.Type.Vector4I
+          or Variant.Type.Rect2 or Variant.Type.Color
+          or Variant.Type.Dictionary or Variant.Type.Array;
 
     private static float AsFloat(JsonNode? n)
     {
