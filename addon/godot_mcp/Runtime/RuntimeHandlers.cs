@@ -19,6 +19,8 @@ internal static class RuntimeHandlers
         // Sync handlers added in v0.3: signals, groups, physics, animation, scene ops,
         // watches (push), eval. Async handlers register in RegisterAsync below.
         RuntimeHandlersExtra.RegisterSync(owner, h);
+        // v0.4: signal subscription, raw input, tilemap, focus control.
+        RuntimeHandlersV04.Register(owner, h);
         // ── introspection ──────────────────────────────────────────────────
         h["runtime_get_tree"] = args => GetTree(owner, args);
         h["runtime_get_node_property"] = args => GetNodeProperty(owner, args);

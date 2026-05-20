@@ -88,7 +88,7 @@ Connection order doesn't matter. The adapters retry with backoff, so you can lau
 
 Set `GODOT_MCP_PORT` in your shell before launching Godot if you've changed the server's port — the editor and runtime adapters read the same variable.
 
-## Available tools (v0.3)
+## Available tools (v0.4)
 
 **Built-in**
 
@@ -122,11 +122,31 @@ Scene mutation
 - `editor_add_node`, `editor_remove_node`
 - `editor_set_node_property`, `editor_get_node_property`
 - `editor_set_node_properties` — **bulk** version, one round trip for many edits
+- `editor_reparent_node` — move a node under a different parent (optionally preserves global transform)
+- `editor_move_node` — change a node's index among its siblings (UI draw order, container layout)
+- `editor_duplicate_node` — deep duplicate with scripts/groups/signals
 - `editor_save_scene`
 - `editor_open_scene` — open a `.tscn`
 - `editor_create_scene` — pack a subtree into a new `.tscn`
 - `editor_instantiate_scene` — add a `.tscn` as child of a node
 - `editor_attach_script`
+
+Selection / focus
+- `editor_select_node` — select a node (or many) in the Scene dock; gives the human watching a visible cue
+- `editor_focus_node` — select + center the viewport on a node
+
+Filesystem
+- `editor_create_folder`, `editor_delete_file`, `editor_rename_file`, `editor_move_file`
+
+Autoloads
+- `editor_list_autoloads`, `editor_add_autoload`, `editor_remove_autoload`
+
+Resource graph
+- `editor_get_resource_dependencies` — what this resource depends on (forward edges)
+- `editor_find_resource_users` — what files reference this resource (backward edges); call before deleting or moving an asset
+
+TileMap (works on both `TileMapLayer` and legacy `TileMap`)
+- `editor_tilemap_get_cell`, `editor_tilemap_set_cell`, `editor_tilemap_paint_rect`, `editor_tilemap_get_used_cells`, `editor_tilemap_clear`
 
 Scripts & build
 - `editor_read_script`, `editor_write_script`, `editor_patch_script` (anchor-based)
@@ -167,11 +187,18 @@ Observation
 
 Input
 - `runtime_inject_action` — fire an InputMap action
+- `runtime_mouse_move`, `runtime_mouse_button`, `runtime_mouse_scroll` — raw mouse events via `Input.parse_input_event`
+- `runtime_key`, `runtime_text_input` — synthesize keyboard events / typed text
+- `runtime_focus_control` — call `Control.grab_focus` so subsequent key/text events go to that control
 - `runtime_set_paused`
 - `runtime_step_frames` — advance N frames deterministically (async; multi-frame await)
 
 Signals
 - `runtime_connect_signal`, `runtime_disconnect_signal`, `runtime_emit_signal`
+- `runtime_listen_signal`, `runtime_unlisten_signal`, `runtime_list_signal_listeners` — server pushes `signal_fired` notifications each time the signal fires (and `listen_ended` when the source leaves the tree)
+
+TileMap (works on both `TileMapLayer` and legacy `TileMap`)
+- `runtime_tilemap_get_cell`, `runtime_tilemap_set_cell`, `runtime_tilemap_get_used_cells`
 
 Groups
 - `runtime_add_to_group`, `runtime_remove_from_group`
@@ -232,6 +259,12 @@ Screenshot tools return an MCP `image` content block (base64 PNG with `mimeType`
 
 **Structured build errors.** `editor_build_project` parses MSBuild output into `errors[]` / `warnings[]` arrays of `{file, line, column?, severity, code, message}`. File paths are normalized to `res://` when inside the project. Raw `stdout`/`stderr` remain in the response for cases the regex misses.
 
+**UndoRedo integration.** Editor mutations (`editor_add_node`, `editor_remove_node`, `editor_set_node_property` and its bulk variant, `editor_attach_script`, `editor_instantiate_scene`, the new `editor_reparent_node` / `editor_move_node` / `editor_duplicate_node`, and all `editor_tilemap_*` writes) go through Godot's `EditorUndoRedoManager` with the edited scene as `custom_context`. The human can Ctrl-Z anything the AI did. Project-settings / autoload / input-map edits write through `ProjectSettings.set_setting` directly because those have their own persistence path and don't participate in the scene undo stack.
+
+**Pushed signal subscriptions.** `runtime_listen_signal` connects a `Callable` to a node's signal (arity-dispatched up to 8 args). Each fire emits a `signal_fired` event with the JSON-serialized args, forwarded to the MCP client as `notifications/message`. When the source emits `tree_exiting` a `listen_ended` event fires so the client can tell the subscription went away on its own.
+
 ## Status
+
+v0.4 — tree edits (reparent/move/duplicate), filesystem ops, autoload management, resource dependency graph, editor selection/focus, TileMap queries+edits, signal subscription (event push), raw mouse/keyboard/text input, full UndoRedo wrapping for editor mutations.
 
 v0.3 — push notifications, watches, step_frames, signals/groups/animation/physics queries at runtime, input-map editing, project settings R/W, scene CRUD, structured build errors, play/stop scene, eval (unsafe). Compiles cleanly against Godot SDK 4.6.x; if you run into an API drift on a different patch release, please open an issue with the Godot version and the failing handler.

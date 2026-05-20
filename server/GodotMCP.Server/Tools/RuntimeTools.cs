@@ -433,6 +433,148 @@ public static class RuntimeTools
             RequiresSurface: Surface.Runtime,
             Handler: null!));
 
+        // ═══════════════════════════════════════════════════════════════
+        // v0.4 additions: signal subscription (push), raw input (mouse / keys /
+        // text), tilemap queries and edits, focus a Control.
+        // ═══════════════════════════════════════════════════════════════
+
+        // ─── signal subscription ────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_listen_signal",
+            Description: "Subscribes to a signal on a live node. Each fire pushes a 'notifications/message' with name='signal_fired' carrying {listener_id, signal, args}. When the source leaves the tree the server pushes 'listen_ended'. Returns a listener_id used with runtime_unlisten_signal.\nExample: { path: '/root/Main/Player', signal: 'died' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("signal", String("Signal name on the source node."), true)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_unlisten_signal",
+            Description: "Disconnects a previously-registered signal listener.",
+            InputSchema: Object(("listener_id", String("Id returned by runtime_listen_signal."), true)),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_list_signal_listeners",
+            Description: "Lists every active signal subscription with its source path, signal name, and whether the source is still alive.",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        // ─── raw input ─────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_mouse_move",
+            Description: "Synthesizes an InputEventMouseMotion at the given screen-space position. 'warp_cursor:true' also moves the OS cursor (useful when capturing a screenshot afterwards).\nExample: { position: {x: 400, y: 300}, warp_cursor: true }.",
+            InputSchema: Object(
+                ("position", AnyValue("{x,y} screen-space position."), true),
+                ("relative", AnyValue("{x,y} relative motion since last event. Optional."), false),
+                ("warp_cursor", Bool("Also warp the OS cursor. Default false."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_mouse_button",
+            Description: "Synthesizes a mouse press, release, or click (press + deferred release). Button indices: 1=left, 2=right, 3=middle, 4=wheel_up, 5=wheel_down.\nExample: { button: 1, mode: 'click', position: {x: 200, y: 150} }.",
+            InputSchema: Object(
+                ("button", Integer("Button index (1=left, 2=right, 3=middle). Default 1."), false),
+                ("mode", String("'press' | 'release' | 'click'. Default 'click'."), false),
+                ("position", AnyValue("{x,y} position. Defaults to current cursor position."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_mouse_scroll",
+            Description: "Synthesizes mouse wheel scroll events. 'amount' controls how many discrete ticks.\nExample: { direction: 'down', amount: 3 }.",
+            InputSchema: Object(
+                ("direction", String("'up' | 'down' | 'left' | 'right'."), true),
+                ("amount", Integer("Number of wheel ticks. Default 1."), false),
+                ("position", AnyValue("{x,y}. Defaults to current cursor position."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_key",
+            Description: "Synthesizes a keyboard event for a single key (with optional modifiers). 'mode' = 'press' | 'release' | 'tap' (default).\nExample: { key: 'escape', mode: 'tap' } or { key: 'a', shift: true }.",
+            InputSchema: Object(
+                ("key", String("Key string, e.g. 'space', 'a', 'escape', 'enter'."), true),
+                ("mode", String("'press' | 'release' | 'tap'. Default 'tap'."), false),
+                ("shift", Bool("Shift modifier."), false),
+                ("ctrl", Bool("Ctrl modifier."), false),
+                ("alt", Bool("Alt modifier."), false),
+                ("meta", Bool("Meta/Command modifier."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_text_input",
+            Description: "Types a string by synthesizing per-character InputEventKey events (with Unicode set). Useful for filling text fields and dialog boxes. For non-text actions use runtime_key.\nExample: { text: 'hello world' }.",
+            InputSchema: Object(("text", String("String to type."), true)),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_focus_control",
+            Description: "Calls Control.grab_focus on a UI control, so subsequent runtime_text_input / runtime_key events route to it.\nExample: { path: '/root/Main/HUD/NameInput' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── tilemap ───────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_tilemap_get_cell",
+            Description: "Reads a cell from a live TileMapLayer / TileMap.\nExample: { path: '/root/Main/Tiles', coords: {x:0,y:0} }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("coords", AnyValue("{x,y} integer cell coordinates."), true),
+                ("layer", Integer("Layer index (TileMap only). Default 0."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_tilemap_set_cell",
+            Description: "Sets a cell on a live TileMapLayer / TileMap. source_id=-1 clears it.\nExample: { path: '/root/Main/Tiles', coords: {x:3,y:5}, source_id: 0, atlas_coords: {x:1,y:2} }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("coords", AnyValue("{x,y} integer cell coordinates."), true),
+                ("source_id", Integer("Tileset source id. -1 to clear. Default -1."), false),
+                ("atlas_coords", AnyValue("{x,y} atlas coordinates."), false),
+                ("alternative_tile", Integer("Alternative tile index. Default 0."), false),
+                ("layer", Integer("Layer index (TileMap only). Default 0."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_tilemap_get_used_cells",
+            Description: "Returns the list of populated cells.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("layer", Integer("Layer index (TileMap only). Default 0."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
         // ─── eval (UNSAFE) ──────────────────────────────────────────────
         Add(registry, adapters, new ToolDefinition(
             Name: "runtime_eval_expression",
