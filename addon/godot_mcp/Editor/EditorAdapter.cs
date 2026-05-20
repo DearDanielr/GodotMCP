@@ -15,5 +15,10 @@ public partial class EditorAdapter : AdapterBase
     {
         EditorHandlers.Register(handlers);
     }
+
+    protected override void RegisterAsyncHandlers(Dictionary<string, AsyncAdapterHandler> handlers)
+    {
+        EditorHandlers.RegisterAsync(handlers);
+    }
 }
 #endif

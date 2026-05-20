@@ -70,7 +70,14 @@ public static class SchemaBuilder
 
     public static JsonObject AnyValue(string? description = null)
     {
-        var o = new JsonObject();
+        // Declare every JSON type explicitly. With no `type` field, some MCP
+        // clients (Claude Code in particular) JSON-stringify object/array values
+        // before sending them — see Vector2/Color round-trip bugs. A type union
+        // tells the harness: "pass any JSON value through verbatim."
+        var o = new JsonObject
+        {
+            ["type"] = new JsonArray { "object", "array", "string", "number", "boolean", "null" },
+        };
         if (description is not null) o["description"] = description;
         return o;
     }

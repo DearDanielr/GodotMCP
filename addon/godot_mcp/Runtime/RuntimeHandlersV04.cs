@@ -435,6 +435,7 @@ internal static class RuntimeHandlersV04
 
     private static Vector2 AsVector2(JsonNode n)
     {
+        n = UnstringifyIfNeeded(n);
         if (n is JsonObject o) return new Vector2(AsFloat(o["x"]), AsFloat(o["y"]));
         if (n is JsonArray a && a.Count >= 2) return new Vector2(AsFloat(a[0]), AsFloat(a[1]));
         throw new AdapterError("invalid_args", "Expected {x,y} or [x,y].");
@@ -442,9 +443,26 @@ internal static class RuntimeHandlersV04
 
     private static Vector2I AsVector2I(JsonNode n)
     {
+        n = UnstringifyIfNeeded(n);
         if (n is JsonObject o) return new Vector2I(AsInt(o["x"]), AsInt(o["y"]));
         if (n is JsonArray a && a.Count >= 2) return new Vector2I(AsInt(a[0]), AsInt(a[1]));
         throw new AdapterError("invalid_args", "Expected {x,y} or [x,y] integer coordinates.");
+    }
+
+    /// Some MCP clients stringify untyped object args. Detect and reparse so the
+    /// object/array branches see real nodes.
+    private static JsonNode UnstringifyIfNeeded(JsonNode n)
+    {
+        if (n is JsonValue v && v.TryGetValue<string>(out var s))
+        {
+            var t = s.AsSpan().TrimStart();
+            if (t.Length > 0 && (t[0] == '{' || t[0] == '['))
+            {
+                try { var parsed = JsonNode.Parse(s); if (parsed is not null) return parsed; }
+                catch { }
+            }
+        }
+        return n;
     }
 
     private static float AsFloat(JsonNode? n)

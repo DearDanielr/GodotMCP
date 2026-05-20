@@ -734,6 +734,20 @@ internal static class EditorHandlersV04
 
     private static Vector2I AsVector2I(JsonNode n)
     {
+        // Some MCP clients stringify untyped object args. Unwrap if so.
+        if (n is JsonValue jv && jv.TryGetValue<string>(out var s))
+        {
+            var t = s.AsSpan().TrimStart();
+            if (t.Length > 0 && (t[0] == '{' || t[0] == '['))
+            {
+                try
+                {
+                    var parsed = JsonNode.Parse(s);
+                    if (parsed is not null) return AsVector2I(parsed);
+                }
+                catch { }
+            }
+        }
         if (n is JsonObject o) return new Vector2I(AsInt(o["x"]), AsInt(o["y"]));
         if (n is JsonArray a && a.Count >= 2) return new Vector2I(AsInt(a[0]), AsInt(a[1]));
         throw new AdapterError("invalid_args", "Expected {x,y} or [x,y] integer coordinates.");

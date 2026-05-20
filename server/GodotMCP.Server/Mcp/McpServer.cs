@@ -249,10 +249,18 @@ public sealed class McpServer
         };
     }
 
+    // Inherit the default TypeInfoResolver: a fresh JsonSerializerOptions has no
+    // resolver, so writing a JsonValuePrimitive<T> (the kind built-in handlers
+    // produce, vs. JsonValueOfElement from wire-parsed forwarded results) throws
+    // "JsonSerializerOptions instance must specify a TypeInfoResolver setting
+    // before being marked as read-only." Caching also avoids per-call allocation.
+    private static readonly JsonSerializerOptions IndentedJsonOptions =
+        new(JsonSerializerOptions.Default) { WriteIndented = true };
+
     private static string ToolResultText(JsonNode? node)
     {
         if (node is null) return "ok";
-        return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        return node.ToJsonString(IndentedJsonOptions);
     }
 
     private void RequireInitialized()

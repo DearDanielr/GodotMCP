@@ -165,7 +165,10 @@ public sealed class AdapterConnection : IAsyncDisposable
                 }
                 else
                 {
-                    tcs.TrySetResult(msg["result"]);
+                    // Detach from `msg`: System.Text.Json throws "The node already
+                    // has a parent." when a JsonNode that still belongs to its
+                    // source tree is reparented into the tool response.
+                    tcs.TrySetResult(msg["result"]?.DeepClone());
                 }
             }
             else if (type == "event")
