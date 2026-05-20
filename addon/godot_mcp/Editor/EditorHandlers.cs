@@ -51,6 +51,9 @@ internal static class EditorHandlers
         h["editor_write_script"] = WriteScript;
         h["editor_patch_script"] = PatchScript;
         h["editor_build_project"] = BuildProject;
+
+        // ── extras (v0.3): play, settings, input-map, resources, eval ──────
+        EditorHandlersExtra.Register(h);
     }
 
     private static EditorInterface EI => EditorInterface.Singleton;
@@ -113,9 +116,8 @@ internal static class EditorHandlers
         if (withProps)
         {
             var props = new JsonObject();
-            foreach (var entry in node.GetPropertyList())
+            foreach (var dict in node.GetPropertyList())
             {
-                var dict = entry.AsGodotDictionary();
                 var usage = (long)dict["usage"];
                 if ((usage & (long)PropertyUsageFlags.Storage) == 0) continue;
                 string pname = dict["name"].AsString();
@@ -148,9 +150,8 @@ internal static class EditorHandlers
         var sn = new StringName(className);
 
         var methods = new JsonArray();
-        foreach (var m in ClassDB.ClassGetMethodList(sn, noInheritance: false))
+        foreach (var d in ClassDB.ClassGetMethodList(sn, noInheritance: false))
         {
-            var d = m.AsGodotDictionary();
             var argsArr = new JsonArray();
             foreach (var p in d["args"].AsGodotArray())
             {
@@ -170,9 +171,8 @@ internal static class EditorHandlers
         }
 
         var properties = new JsonArray();
-        foreach (var p in ClassDB.ClassGetPropertyList(sn, noInheritance: false))
+        foreach (var d in ClassDB.ClassGetPropertyList(sn, noInheritance: false))
         {
-            var d = p.AsGodotDictionary();
             properties.Add(new JsonObject
             {
                 ["name"] = d["name"].AsString(),
@@ -181,9 +181,8 @@ internal static class EditorHandlers
         }
 
         var signals = new JsonArray();
-        foreach (var sig in ClassDB.ClassGetSignalList(sn, noInheritance: false))
+        foreach (var d in ClassDB.ClassGetSignalList(sn, noInheritance: false))
         {
-            var d = sig.AsGodotDictionary();
             signals.Add(new JsonObject { ["name"] = d["name"].AsString() });
         }
 
@@ -246,9 +245,8 @@ internal static class EditorHandlers
     {
         var node = ResolveNode(args);
         var arr = new JsonArray();
-        foreach (var m in node.GetMethodList())
+        foreach (var d in node.GetMethodList())
         {
-            var d = m.AsGodotDictionary();
             string name = d["name"].AsString();
             if (name.StartsWith("_", StringComparison.Ordinal) && (args["include_internal"]?.GetValue<bool>() ?? false) == false)
                 continue;
@@ -261,9 +259,8 @@ internal static class EditorHandlers
     {
         var node = ResolveNode(args);
         var arr = new JsonArray();
-        foreach (var p in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = p.AsGodotDictionary();
             var usage = (long)d["usage"];
             if ((usage & (long)PropertyUsageFlags.Storage) == 0 &&
                 (usage & (long)PropertyUsageFlags.Editor) == 0) continue;
@@ -280,9 +277,8 @@ internal static class EditorHandlers
     {
         var node = ResolveNode(args);
         var arr = new JsonArray();
-        foreach (var sig in node.GetSignalList())
+        foreach (var d in node.GetSignalList())
         {
-            var d = sig.AsGodotDictionary();
             arr.Add(d["name"].AsString());
         }
         return new JsonObject { ["path"] = NodePathFor(node), ["count"] = arr.Count, ["signals"] = arr };
@@ -590,9 +586,10 @@ internal static class EditorHandlers
     private static JsonNode? SaveScene(JsonObject args)
     {
         string? path = args["scene_path"]?.GetValue<string>();
-        Error err = string.IsNullOrEmpty(path) ? EI.SaveScene() : EI.SaveSceneAs(path);
-        if (err != Error.Ok)
-            throw new AdapterError("internal_error", $"Save failed: {err}");
+        // EditorInterface.SaveScene / SaveSceneAs return void in 4.6; we rely on
+        // a subsequent file check rather than an Error return to detect failure.
+        if (string.IsNullOrEmpty(path)) EI.SaveScene();
+        else EI.SaveSceneAs(path);
         return new JsonObject { ["saved"] = string.IsNullOrEmpty(path) ? (EI.GetEditedSceneRoot()?.SceneFilePath ?? "") : path };
     }
 
@@ -708,11 +705,29 @@ internal static class EditorHandlers
         // Trigger an editor filesystem scan so the new assembly is picked up.
         EI.GetResourceFilesystem().Scan();
 
+        // Parse MSBuild diagnostics into structured {file, line, severity, message}
+        // entries so the AI doesn't have to grep stdout. Includes both errors and
+        // warnings; the 'errors' / 'warnings' arrays split them for convenience.
+        var diagnostics = EditorHandlersExtra.ParseBuildOutput(stdout + "\n" + stderr, projectRoot);
+        var errors = new JsonArray();
+        var warnings = new JsonArray();
+        foreach (var d in diagnostics)
+        {
+            if (d is not JsonObject dObj) continue;
+            string sev = dObj["severity"]?.GetValue<string>() ?? "";
+            if (sev == "error") errors.Add(dObj.DeepClone());
+            else if (sev == "warning") warnings.Add(dObj.DeepClone());
+        }
+
         return new JsonObject
         {
             ["ok"] = ok,
             ["exit_code"] = proc.ExitCode,
             ["elapsed_ms"] = sw.ElapsedMilliseconds,
+            ["error_count"] = errors.Count,
+            ["warning_count"] = warnings.Count,
+            ["errors"] = errors,
+            ["warnings"] = warnings,
             ["stdout"] = stdout,
             ["stderr"] = stderr,
         };
@@ -771,16 +786,15 @@ internal static class EditorHandlers
 
     private static bool NodeHasProperty(Node node, string property)
     {
-        foreach (var entry in node.GetPropertyList())
-            if (entry.AsGodotDictionary()["name"].AsString() == property) return true;
+        foreach (var d in node.GetPropertyList())
+            if (d["name"].AsString() == property) return true;
         return false;
     }
 
     private static IEnumerable<string> NodePropertyNames(Node node)
     {
-        foreach (var entry in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = entry.AsGodotDictionary();
             var usage = (long)d["usage"];
             if ((usage & (long)PropertyUsageFlags.Storage) == 0 && (usage & (long)PropertyUsageFlags.Editor) == 0) continue;
             yield return d["name"].AsString();
@@ -789,9 +803,8 @@ internal static class EditorHandlers
 
     private static Variant.Type PropertyHint(Node node, string property)
     {
-        foreach (var entry in node.GetPropertyList())
+        foreach (var d in node.GetPropertyList())
         {
-            var d = entry.AsGodotDictionary();
             if (d["name"].AsString() == property) return (Variant.Type)(long)d["type"];
         }
         return Variant.Type.Nil;

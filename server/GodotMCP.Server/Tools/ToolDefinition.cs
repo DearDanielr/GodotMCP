@@ -12,7 +12,8 @@ public sealed record ToolDefinition(
     JsonObject InputSchema,
     Surface? RequiresSurface,
     ToolHandler Handler,
-    bool Mutates = false)
+    bool Mutates = false,
+    bool Unsafe = false)
 {
     public JsonObject ToWire()
     {

@@ -37,4 +37,9 @@ public partial class GodotMcpRuntimeAutoload : AdapterBase
     {
         RuntimeHandlers.Register(this, handlers);
     }
+
+    protected override void RegisterAsyncHandlers(Dictionary<string, AsyncAdapterHandler> handlers)
+    {
+        RuntimeHandlers.RegisterAsync(this, handlers);
+    }
 }

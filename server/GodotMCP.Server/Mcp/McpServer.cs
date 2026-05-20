@@ -14,18 +14,33 @@ public sealed class McpServer
     private readonly TextWriter _stdout;
     private readonly Action<string> _log;
     private readonly bool _readOnly;
+    private readonly bool _allowUnsafe;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     private bool _initialized;
     private const string ProtocolVersion = "2024-11-05";
 
-    public McpServer(ToolRegistry tools, TextReader stdin, TextWriter stdout, Action<string> log, bool readOnly = false)
+    public McpServer(ToolRegistry tools, TextReader stdin, TextWriter stdout, Action<string> log, bool readOnly = false, bool allowUnsafe = false)
     {
         _tools = tools;
         _stdin = stdin;
         _stdout = stdout;
         _log = log;
         _readOnly = readOnly;
+        _allowUnsafe = allowUnsafe;
+    }
+
+    /// Send a JSON-RPC notification to the client. Used by adapter event forwarding
+    /// (e.g. runtime_watch_property pushes property change events here).
+    public Task SendNotificationAsync(string method, JsonNode? params_, CancellationToken ct)
+    {
+        var msg = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["method"] = method,
+        };
+        if (params_ is not null) msg["params"] = params_.DeepClone();
+        return WriteAsync(msg, ct);
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -83,7 +98,7 @@ public sealed class McpServer
         catch (JsonRpcException ex)
         {
             if (!isNotification)
-                await WriteAsync(JsonRpcMessages.Error(id, ex.Code, ex.Message, ex.Data), ct);
+                await WriteAsync(JsonRpcMessages.Error(id, ex.Code, ex.Message, ex.RpcData), ct);
         }
         catch (Exception ex)
         {
@@ -149,6 +164,23 @@ public sealed class McpServer
                 {
                     ["code"] = ErrorCodes.ReadOnly,
                     ["message"] = $"Server is in read-only mode; '{name}' would mutate state.",
+                },
+            };
+        }
+
+        if (!_allowUnsafe && tool.Unsafe)
+        {
+            return new JsonObject
+            {
+                ["content"] = new JsonArray
+                {
+                    new JsonObject { ["type"] = "text", ["text"] = $"[{ErrorCodes.UnsafeDisabled}] '{name}' is tagged unsafe. Start the server with --allow-unsafe to enable it." }
+                },
+                ["isError"] = true,
+                ["structuredContent"] = new JsonObject
+                {
+                    ["code"] = ErrorCodes.UnsafeDisabled,
+                    ["message"] = $"'{name}' is tagged unsafe. Start the server with --allow-unsafe to enable it.",
                 },
             };
         }

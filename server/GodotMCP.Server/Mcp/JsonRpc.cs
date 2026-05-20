@@ -16,11 +16,11 @@ public static class JsonRpcCodes
 public sealed class JsonRpcException : Exception
 {
     public int Code { get; }
-    public JsonNode? Data { get; }
+    public JsonNode? RpcData { get; }
     public JsonRpcException(int code, string message, JsonNode? data = null) : base(message)
     {
         Code = code;
-        Data = data;
+        RpcData = data;
     }
 }
 

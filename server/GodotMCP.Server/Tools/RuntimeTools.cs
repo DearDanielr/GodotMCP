@@ -202,6 +202,250 @@ public static class RuntimeTools
             RequiresSurface: Surface.Runtime,
             Handler: null!,
             Mutates: true));
+
+        // ─── step frames (deterministic stepping) ───────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_step_frames",
+            Description: "Advances the game by N idle frames, then (by default) pauses again. Use this for deterministic 'tick once and observe' loops. unpause_first defaults true (so it works whether already paused); repause_after defaults true.\nExample: { frames: 5 } steps 5 frames then pauses.",
+            InputSchema: Object(
+                ("frames", Integer("Number of process_frame ticks to advance. Capped at 240. Default 1."), false),
+                ("unpause_first", Bool("Set Paused=false before stepping. Default true."), false),
+                ("repause_after", Bool("Set Paused=true after stepping. Default true."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── signals ────────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_connect_signal",
+            Description: "Connects a signal emitted by 'from' to a method on 'to'. Both targets accept path or instance_id.\nExample: { from_path: '/root/Main/Player', signal: 'died', to_path: '/root/Main/HUD', method: '_on_player_died' }.",
+            InputSchema: Object(
+                ("from_path", String("Source node path."), false),
+                ("from_instance_id", String("Source instance id."), false),
+                ("signal", String("Signal name on the source node."), true),
+                ("to_path", String("Target node path."), false),
+                ("to_instance_id", String("Target instance id."), false),
+                ("method", String("Method on the target node to call."), true),
+                ("flags", Integer("Optional Godot connect flags bitmask (e.g. 1=deferred, 4=one-shot)."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_disconnect_signal",
+            Description: "Disconnects a previously-connected signal binding. Same shape as connect; method must match.",
+            InputSchema: Object(
+                ("from_path", String("Source node path."), false),
+                ("from_instance_id", String("Source instance id."), false),
+                ("signal", String("Signal name."), true),
+                ("to_path", String("Target node path."), false),
+                ("to_instance_id", String("Target instance id."), false),
+                ("method", String("Bound method name."), true)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_emit_signal",
+            Description: "Emits a signal on a live node with the given positional arguments. Useful for triggering game events from the AI.\nExample: { path: '/root/Main/Player', signal: 'damaged', args: [10] }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("signal", String("Signal name."), true),
+                ("args", Array(AnyValue(), "Positional args for the signal."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── groups ─────────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_add_to_group",
+            Description: "Adds a live node to a group.\nExample: { path: '/root/Main/Enemy42', group: 'hostile' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("group", String("Group name."), true),
+                ("persistent", Bool("Persistent membership (default false)."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_remove_from_group",
+            Description: "Removes a live node from a group.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("group", String("Group name."), true)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── physics queries ────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_physics_raycast_2d",
+            Description: "Casts a 2D ray through the active World2D and returns {hit, position, normal, collider_path, collider_id, ...} or {hit:false}.\nExample: { from: {x:0,y:0}, to: {x:100,y:0}, mask: 1 }.",
+            InputSchema: Object(
+                ("from", AnyValue("Origin {x,y}."), true),
+                ("to", AnyValue("End point {x,y}."), true),
+                ("mask", Integer("Collision mask bitmask. Default = all."), false),
+                ("collide_with_areas", Bool("Include Area2D in results. Default false."), false),
+                ("collide_with_bodies", Bool("Include CollisionObject2D bodies. Default true."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_physics_raycast_3d",
+            Description: "Casts a 3D ray through the active World3D. Same shape as the 2D version but with {x,y,z}.",
+            InputSchema: Object(
+                ("from", AnyValue("Origin {x,y,z}."), true),
+                ("to", AnyValue("End point {x,y,z}."), true),
+                ("mask", Integer("Collision mask bitmask."), false),
+                ("collide_with_areas", Bool("Default false."), false),
+                ("collide_with_bodies", Bool("Default true."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_physics_overlap_point_2d",
+            Description: "Returns 2D colliders that overlap a point.\nExample: { point: {x:50,y:50}, max_results: 16 }.",
+            InputSchema: Object(
+                ("point", AnyValue("Point {x,y}."), true),
+                ("mask", Integer("Collision mask."), false),
+                ("max_results", Integer("Default 32."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        // ─── animation ──────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_animation_list",
+            Description: "Lists the animations available on an AnimationPlayer node.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_animation_play",
+            Description: "Plays an animation on an AnimationPlayer. Omit 'animation' to resume the current one.\nExample: { path: '/root/Main/Player/AnimationPlayer', animation: 'idle', speed: 1.0 }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("animation", String("Animation name (optional)."), false),
+                ("speed", Number("Playback speed multiplier. Default 1."), false),
+                ("from_end", Bool("Play in reverse. Default false."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_animation_stop",
+            Description: "Stops the AnimationPlayer. 'keep_state' true preserves current property values.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("keep_state", Bool("Default false."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_animation_seek",
+            Description: "Seeks the AnimationPlayer to a specific time.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("time", Number("Time in seconds."), true),
+                ("update", Bool("Apply animation effects immediately. Default true."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── scene ops ──────────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_instantiate_scene",
+            Description: "Loads a .tscn at runtime and adds an instance as child of a live node.\nExample: { scene_path: 'res://scenes/enemy.tscn', parent_path: '/root/Main/Enemies', name: 'Goblin1' }.",
+            InputSchema: Object(
+                ("scene_path", String("res:// path of the .tscn."), true),
+                ("parent_path", String("Absolute path to the parent."), true),
+                ("name", String("Optional name."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_free_node",
+            Description: "Queues a live node for deletion (Node.QueueFree).",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_change_scene",
+            Description: "Calls SceneTree.ChangeSceneToFile to swap the current scene at runtime.",
+            InputSchema: Object(("scene_path", String("res:// path of the next scene."), true)),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true));
+
+        // ─── watches (push) ─────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_watch_property",
+            Description: "Subscribes to changes on a node property. The server pushes 'notifications/message' with name='watch_changed' each time the JSON-serialized value differs, and 'watch_ended' if the node is freed. Returns a watch_id used with runtime_unwatch_property.\nExample: { path: '/root/Main/Player', property: 'position' }.",
+            InputSchema: Object(
+                ("path", PathArg, false),
+                ("instance_id", InstanceIdArg, false),
+                ("property", String("Property to watch."), true)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_unwatch_property",
+            Description: "Cancels a previously-registered watch.",
+            InputSchema: Object(("watch_id", String("Id from runtime_watch_property."), true)),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_list_watches",
+            Description: "Lists currently active property watches.",
+            InputSchema: Object(),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!));
+
+        // ─── eval (UNSAFE) ──────────────────────────────────────────────
+        Add(registry, adapters, new ToolDefinition(
+            Name: "runtime_eval_expression",
+            Description: "Evaluates a Godot Expression in the runtime process with the SceneTree root as the default base. Unbounded — disabled unless server started with --allow-unsafe.\nExample: { expression: 'get_node(\"Main/Player\").position' } or { expression: 'a + b', inputs: { a: 1, b: 2 } }.",
+            InputSchema: Object(
+                ("expression", String("Expression source."), true),
+                ("inputs", AnyValue("Optional {name: value} map of named inputs."), false),
+                ("base_path", String("Optional node path to use as the base instance. Defaults to SceneTree.Root."), false)
+            ),
+            RequiresSurface: Surface.Runtime,
+            Handler: null!,
+            Mutates: true,
+            Unsafe: true));
     }
 
     private static void Add(ToolRegistry registry, AdapterRegistry adapters, ToolDefinition partial)
